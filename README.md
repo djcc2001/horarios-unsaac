@@ -33,7 +33,7 @@
 
 ```bash
 # 1. Clonar el repositorio
-git clone https://github.com/TU_USUARIO/unsaac-horarios.git
+git clone https://github.com/djcc2001/horarios-unsaac
 cd unsaac-horarios
 
 # 2. Crear entorno virtual e instalar dependencias

@@ -1,6 +1,7 @@
 import requests
 import xml.etree.ElementTree as ET
 import urllib3
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 urllib3.disable_warnings()
@@ -9,8 +10,12 @@ BASE  = "https://intranetalumnos.unsaac.edu.pe:8500/api"
 DIAS  = {"LU": "Lunes", "MA": "Martes", "MI": "Miércoles", "JU": "Jueves", "VI": "Viernes", "SA": "Sábado"}
 TIPOS = {"T": "Teoría", "L": "Lab", "P": "Práctica"}
 
+# ── Cache en memoria ──────────────────────────────────────
+_cache = {}
+CACHE_TTL = 300  # 5 minutos
+
 def get_data(url):
-    r = requests.get(url, verify=False, timeout=10)
+    r = requests.get(url, verify=False, timeout=15)
     r.raise_for_status()
     content_type = r.headers.get("Content-Type", "")
     if "json" in content_type:
@@ -26,18 +31,22 @@ def get_semestre_activo():
 
 def get_carreras():
     data = get_data(f"{BASE}/Carrera/ListaCarreras/")
-    carreras = []
-    for item in data:
-        carreras.append({
-            "cp":     item.get("cp"),
-            "nombre": item.get("nombre"),
-        })
-    return carreras
+    return [{"cp": item.get("cp"), "nombre": item.get("nombre")} for item in data]
 
 def get_cursos_unicos(carrera, semestre):
+    key = f"{carrera}-{semestre}"
+    ahora = time.time()
+
+    # Devolver cache si está vigente
+    if key in _cache and ahora - _cache[key]["ts"] < CACHE_TTL:
+        print(f"[cache] {key} — {len(_cache[key]['data'])} cursos")
+        return _cache[key]["data"]
+
+    print(f"[fetch] {key} — consultando API...")
     data = get_data(f"{BASE}/Catalogo/CatalogoHorario/{carrera}/{semestre}/0")
     vistos = set()
     cursos = []
+
     for item in data:
         curso   = item.get("curso")
         grupo   = item.get("grupo")
@@ -69,6 +78,10 @@ def get_cursos_unicos(carrera, semestre):
                     "aula": aula or "?",
                     "tipo": TIPOS.get(tipo, tipo or "?")
                 })
+
+    # Guardar en cache
+    _cache[key] = {"data": cursos, "ts": ahora}
+    print(f"[cache] {key} guardado — {len(cursos)} cursos")
     return cursos
 
 def buscar_en_curso(cod_asignatura, semestre, codigo_alumno):
@@ -83,7 +96,7 @@ def buscar_en_curso(cod_asignatura, semestre, codigo_alumno):
 
 def buscar_alumno(codigo_alumno, carrera, semestre):
     cursos = get_cursos_unicos(carrera, semestre)
-    nombre_alumno    = ""
+    nombre_alumno     = ""
     cursos_encontrados = []
 
     def buscar(curso):
@@ -92,7 +105,7 @@ def buscar_alumno(codigo_alumno, carrera, semestre):
             return nombre, curso
         return None, None
 
-    with ThreadPoolExecutor(max_workers=20) as executor:
+    with ThreadPoolExecutor(max_workers=10) as executor:
         futuros = {executor.submit(buscar, curso): curso for curso in cursos}
         for futuro in as_completed(futuros):
             nombre, curso = futuro.result()
